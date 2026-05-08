@@ -2,15 +2,18 @@ import streamlit as st
 import os
 import glob
 
-# Handling MoviePy version differences (v1.x vs v2.x)
-try:
-    from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
-except ImportError:
-    from moviepy import ImageClip, concatenate_videoclips, AudioFileClip
+# MoviePy Imports
+from moviepy.editor import (
+    ImageClip,
+    concatenate_videoclips,
+    AudioFileClip
+)
 
 import yt_dlp
 
-# --- 1. INITIALIZE STATE ---
+# -----------------------------
+# SESSION STATE
+# -----------------------------
 if 'audio_path' not in st.session_state:
     st.session_state['audio_path'] = None
 
@@ -18,11 +21,12 @@ if 'yt_error' not in st.session_state:
     st.session_state['yt_error'] = None
 
 
-# --- 2. DEFINE ALL FUNCTIONS ---
-
+# -----------------------------
+# CLEANUP FUNCTION
+# -----------------------------
 def cleanup_temp_files():
-    """Removes temporary files and resets memory."""
-    
+    """Remove temporary files."""
+
     files = glob.glob("temp_*") + ["output_video.mp4"]
 
     for f in files:
@@ -35,8 +39,11 @@ def cleanup_temp_files():
     st.session_state['yt_error'] = None
 
 
+# -----------------------------
+# YOUTUBE AUDIO DOWNLOAD
+# -----------------------------
 def download_youtube_audio(url):
-    """Downloads audio from YouTube."""
+    """Download audio from YouTube."""
 
     audio_opts = {
         'format': 'bestaudio/best',
@@ -46,6 +53,7 @@ def download_youtube_audio(url):
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'quiet': True
     }
 
     with yt_dlp.YoutubeDL(audio_opts) as ydl:
@@ -55,26 +63,30 @@ def download_youtube_audio(url):
 
 
 def handle_youtube_download(url):
-    """Handles YouTube audio download."""
+    """Handle YouTube download."""
 
     try:
         st.session_state['yt_error'] = None
 
-        res_path = download_youtube_audio(url)
+        result_path = download_youtube_audio(url)
 
-        if res_path:
-            st.session_state['audio_path'] = res_path
+        if result_path:
+            st.session_state['audio_path'] = result_path
 
     except Exception as e:
         st.session_state['yt_error'] = str(e)
 
 
+# -----------------------------
+# VIDEO CREATION FUNCTION
+# -----------------------------
 def create_video(image_files, duplicate_count, fps, audio_path):
-    """Creates video from images and audio."""
+    """Create video from images and audio."""
 
     clips = []
 
     duration_per_image = duplicate_count / fps
+
     target_resolution = (1280, 720)
 
     for idx, img_file in enumerate(image_files):
@@ -84,23 +96,42 @@ def create_video(image_files, duplicate_count, fps, audio_path):
         with open(temp_img_path, "wb") as f:
             f.write(img_file.getbuffer())
 
-        clip = ImageClip(temp_img_path).with_duration(duration_per_image)
-        clip = clip.resized(target_resolution)
+        # Create image clip
+        clip = ImageClip(temp_img_path)
+
+        # Set duration
+        clip = clip.set_duration(duration_per_image)
+
+        # Resize image
+        clip = clip.resize(target_resolution)
 
         clips.append(clip)
 
-    final_video = concatenate_videoclips(clips, method="compose")
-    final_video = final_video.with_fps(fps)
+    # Merge all clips
+    final_video = concatenate_videoclips(
+        clips,
+        method="compose"
+    )
 
+    # Set FPS
+    final_video = final_video.set_fps(fps)
+
+    # Add audio
     audio_clip = AudioFileClip(audio_path)
 
+    # Trim audio if longer than video
     if audio_clip.duration > final_video.duration:
-        audio_clip = audio_clip.with_duration(final_video.duration)
+        audio_clip = audio_clip.subclip(
+            0,
+            final_video.duration
+        )
 
-    final_clip = final_video.with_audio(audio_clip)
+    # Attach audio
+    final_clip = final_video.set_audio(audio_clip)
 
     output_filename = "output_video.mp4"
 
+    # Export video
     final_clip.write_videofile(
         output_filename,
         codec="libx264",
@@ -110,33 +141,47 @@ def create_video(image_files, duplicate_count, fps, audio_path):
     return output_filename
 
 
-# --- 3. STREAMLIT UI LOGIC ---
-
+# -----------------------------
+# STREAMLIT PAGE CONFIG
+# -----------------------------
 st.set_page_config(
     page_title="PragyanAI Video Creator",
     layout="wide"
 )
 
-# Display logo
+# -----------------------------
+# LOGO
+# -----------------------------
 if os.path.exists("BMW.jpg"):
-    st.image("BMW.jpg")
+    st.image("BMW.jpg", width=250)
 
+# -----------------------------
+# TITLE
+# -----------------------------
 st.title("PragyanAI - Multimedia Merger")
 
 st.markdown(
-    "Upload multiple images, specify timing, and add audio from a file or YouTube."
+    """
+    Upload multiple images, set timing,
+    and merge them with audio from:
+    
+    - Uploaded audio file
+    - YouTube URL
+    """
 )
 
-# Sidebar
+# -----------------------------
+# SIDEBAR
+# -----------------------------
 with st.sidebar:
 
     st.header("Video Settings")
 
     fps = st.slider(
         "Frames Per Second (FPS)",
-        1,
-        60,
-        24
+        min_value=1,
+        max_value=60,
+        value=24
     )
 
     duplicates = st.number_input(
@@ -147,49 +192,66 @@ with st.sidebar:
 
     if st.button("Clear Cache & Temp Files"):
         cleanup_temp_files()
+        st.success("Temporary files cleared.")
         st.rerun()
 
-# Main Layout
+# -----------------------------
+# MAIN LAYOUT
+# -----------------------------
 col1, col2 = st.columns(2)
 
-# Image Upload
+# -----------------------------
+# IMAGE SECTION
+# -----------------------------
 with col1:
 
-    st.subheader("1. Images")
+    st.subheader("1. Upload Images")
 
     uploaded_images = st.file_uploader(
         "Upload Image Sequence",
-        type=["jpg", "png", "jpeg"],
+        type=["jpg", "jpeg", "png"],
         accept_multiple_files=True
     )
 
-# Audio Section
+# -----------------------------
+# AUDIO SECTION
+# -----------------------------
 with col2:
 
-    st.subheader("2. Audio")
+    st.subheader("2. Add Audio")
 
     uploaded_audio = st.file_uploader(
         "Upload Audio File",
         type=["mp3", "wav"]
     )
 
-    youtube_url = st.text_input("Or Paste YouTube URL")
+    st.markdown("### OR")
+
+    youtube_url = st.text_input(
+        "Paste YouTube URL"
+    )
 
     if st.button("Download YouTube Audio"):
 
         if youtube_url:
-            handle_youtube_download(youtube_url)
+            with st.spinner("Downloading audio..."):
+                handle_youtube_download(youtube_url)
+
+            if st.session_state['audio_path']:
+                st.success("YouTube audio downloaded successfully!")
 
     if st.session_state['yt_error']:
         st.error(st.session_state['yt_error'])
 
-# Generate Video
+# -----------------------------
+# VIDEO GENERATION
+# -----------------------------
 st.subheader("3. Create Video")
 
 if st.button("Generate Video"):
 
     if not uploaded_images:
-        st.warning("Please upload images.")
+        st.warning("Please upload images first.")
 
     else:
 
@@ -209,11 +271,13 @@ if st.button("Generate Video"):
             audio_path = st.session_state['audio_path']
 
         else:
-            st.warning("Please upload audio or use YouTube URL.")
+            st.warning(
+                "Please upload audio or download from YouTube."
+            )
 
         if audio_path:
 
-            with st.spinner("Creating video..."):
+            with st.spinner("Creating video... Please wait."):
 
                 output_video = create_video(
                     uploaded_images,
@@ -224,8 +288,10 @@ if st.button("Generate Video"):
 
             st.success("Video Created Successfully!")
 
+            # Display video
             st.video(output_video)
 
+            # Download button
             with open(output_video, "rb") as file:
 
                 st.download_button(
